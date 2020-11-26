@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging, aiomysql
 
-# 创建连接池
+# 创建全局连接池
 def create_pool(loop, **kw):
     logging.info('create database connection pool...')
     # 全局变量__pool 存储，默认为utf8
@@ -19,3 +19,35 @@ def create_pool(loop, **kw):
         loop = loop
     )
 
+# 传入SELECT
+async def select(sql, args, size=None):
+    log(sql, args)
+    global __pool
+    with await __pool as conn:
+        cur = await conn.cursor(aiomysql.DictCursor)
+        # SQL占位符是 ？，MYSQL 的占位符是 %s，select() 函数在内部自动替换
+        await cur.execute(sql.replace('?', '$s'), args or ())
+        # 通过fetchmany()获得指定数量记录，否则通过fetchall()获取所有记录
+        if size:
+            rs = await cur.fetchmany(size)
+        else:
+            rs = await cur.fetchall()
+        await cur.close()
+        logging.info('rows returned: %s' % len(rs))
+        return rs
+
+# 用execute 替代INSERT UPDATE DELETE 语句，返回一个整数表示影响的行数
+# execute 与 select 不同的是cursor 不返回结果集，而是通过rowcount 返回结果数
+async def execute(sql, args):
+    log(sql)
+    with await __pool as conn:
+        try:
+            cur = await conn.cursor()
+            await cur.execute(sql.replace('?', '%s'), args)
+            affected = cur.rowcount
+            await cur.close()
+        except BaseException as e:
+            raise
+        return affected
+
+# 定义Model

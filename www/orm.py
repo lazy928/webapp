@@ -89,3 +89,31 @@ class Field(object):
     def __str__(self):
         return '<$s, %s:%s>' % (self.__class__.__name__, self.column_type, self.name)
 
+class StringField(Field):
+    def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
+        super().__init__(name, primary_key, default,ddl)
+
+class ModelMetaclass(type):
+    def __new__(cls, name, bases, attrs):
+        # 排除Model 类本身
+        if name == 'Model':
+            return type.__new__(cls, name, bases, attrs)
+        # 获取table名称
+        tableName = attrs.get('__table__', None) or name
+        logging.info('found model: %s (table: %s)' % (name, tableName))
+        # 获取所有的Field 和主键名
+        mappings = dict()
+        fields = []
+        primaryKey = None
+        for k, v in attrs.items():
+            if isinstance(v, Field):
+                logging.info('found mapping: %s ==> %s' % (k, v))
+                mappings[k] = v
+                if v.primary_key:
+                    # 找到主键
+                    if primaryKey:
+                        raise RuntimeError('Duplicate primary key for field: %s' % k)
+                    primaryKey = k
+                else:
+                    fields.append(k)
+        if not primaryKey:

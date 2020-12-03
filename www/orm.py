@@ -32,7 +32,7 @@ async def create_pool(loop, **kw):
 # 传入SELECT
 async def select(sql, args, size=None):
     ' 执行Select '
-    log(sql, args)
+    log(sql)
     global __pool
     # await 可以让它后面执行的语句等一会，防止多个程序同时执行，达到异步效果
     with await __pool as conn:
@@ -55,17 +55,22 @@ async def select(sql, args, size=None):
 # 用execute 替代INSERT UPDATE DELETE 语句，返回一个整数表示影响的行数
 # execute 与 select 不同的是cursor 不返回结果集，而是通过rowcount 返回结果数
 async def execute(sql, args):
-    log(sql, args)
+    log(sql)
+    global __pool
     with await __pool as conn:
         try:
             cur = await conn.cursor()
             await cur.execute(sql.replace('?', '%s'), args)
+            # rowcount 获取函数影响的行数
             affected = cur.rowcount
             await cur.close()
+        # 错误抛出，e 改掉就不报错
         except BaseException as e:
             raise
+        # 返回行数
         return affected
 
+# 这个函数只在Model 类里被调用
 def create_args_string(num):
     L = []
     for n in range(num):
@@ -73,12 +78,18 @@ def create_args_string(num):
     return ','.join(L)
 
 class ModelMetaclass(type):
+    # __new__ 方法接收到到参数依次是
+    # cls 当前准备创建的类的对象 class
+    # name 类的名字 str
+    # bases 类继承的父类集合 Tuple
+    # attrs 类的方法合集
     def __new__(cls, name, bases, attrs):
         # 排除Model 类本身
         if name == 'Model':
             return type.__new__(cls, name, bases, attrs)
         # 获取table名称
         tableName = attrs.get('__table__', None) or name
+        # 在日志里找到name 的model
         logging.info('found model: %s (table: %s)' % (name, tableName))
         # 获取所有的Field 和主键名
         mappings = dict()
@@ -89,11 +100,12 @@ class ModelMetaclass(type):
                 logging.info('found mapping: %s ==> %s' % (k, v))
                 mappings[k] = v
                 if v.primary_key:
-                    # 找到主键
+                    # 找到主键，如果有，返回一个错误
                     if primaryKey:
                         raise RuntimeError('Duplicate primary key for field: %s' % k)
                     primaryKey = k
                 else:
+                    # 没有找到主键就在fields 里加上k
                     fields.append(k)
         if not primaryKey:
             raise RuntimeError('Primary key not found.')

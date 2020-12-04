@@ -96,17 +96,21 @@ class ModelMetaclass(type):
         fields = []
         primaryKey = None
         for k, v in attrs.items():
+            # 如果 v 和 field 类型相同则返回 True ，不同则 False
             if isinstance(v, Field):
                 logging.info('found mapping: %s ==> %s' % (k, v))
                 mappings[k] = v
+                # v.primary_key 为True ，则field 为主键
                 if v.primary_key:
                     # 找到主键，如果有，返回一个错误
                     if primaryKey:
                         raise RuntimeError('Duplicate primary key for field: %s' % k)
+                    # 给主键赋值
                     primaryKey = k
                 else:
                     # 没有找到主键就在fields 里加上k
                     fields.append(k)
+        # 如果主键为 None 就报错
         if not primaryKey:
             raise RuntimeError('Primary key not found.')
         for k in mappings.keys():

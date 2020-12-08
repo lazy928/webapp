@@ -113,6 +113,7 @@ class ModelMetaclass(type):
         # 如果主键为 None 就报错
         if not primaryKey:
             raise RuntimeError('Primary key not found.')
+        # 如果key 存在于字典中，则将其移除并返回其值，否则返回 default
         for k in mappings.keys():
             attrs.pop(k)
         escaped_fields = list(map(lambda f: '`%s`' % f, fields))
@@ -122,53 +123,72 @@ class ModelMetaclass(type):
         attrs['__fields__'] = fields # 除主键外的属性名
         # 构造默认的SELECT, INSERT, UPDATE和DELETE语句
         attrs['__select__'] = 'select `%s`, %s from `%s`' % (primaryKey, ','.join(escaped_fields),tableName)
-        attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (tableName, ','.join(escaped_fields),primaryKey, create_args_string(len(escaped_fields) + 1))
+        attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (tableName, ','.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields) + 1))
         attrs['__update__'] = 'update `%s` set %s where `%s` = ?' % (tableName, ','.join(map(lambda f:'`%s` = ?' % (mappings.get(f).name or f), fields)), primaryKey)
         attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
         return type.__new__(cls, name, bases, attrs)
 
 # 定义Model
+# metaclass 参数提示 Model 要通过上面的 __new__ 来创建
 class Model(dict, metaclass=ModelMetaclass):
     def __init__(self, **kw):
+        # super 显式加点属性查找绑定过程的一部分实现
+        # https://docs.python.org/zh-cn/3.8/library/functions.html?highlight=super#super
         super(Model, self).__init__(**kw)
-
+    # 返回参数 key 的自身属性，出错则返回具体错误
     def __getattr__(self, key):
         try:
             return self[key]
         except KeyError:
             raise AttributeError(r"'Model' object has no attribute '%s'" % key)
-
+    # 设置自身属性
     def __setattr__(self, key, value):
         self[key] = value
-
+    # 通过属性返回想要的值
     def getValue(self, key):
         return getattr(self, key, None)
 
     def getValueOrDefault(self, key):
         value = getattr(self, key, None)
+        # 如果 value 为 None 定位某个键，否则直接返回
         if value is None:
             field = self.__mappings__[key]
             if field.default is not None:
+                # 如果不为 None 则赋值给 value
                 value = field.default() if callable(field.default) else field.default
                 logging.debug('Using default value for %s:%s' % (key, str(value)))
                 setattr(self, key, value)
         return value
-
-    # 往Model 类添加class 方法，可以让所有子类地调用class 方法
+    # 往 Model 类添加 class 方法，可以让所有子类调用 class 方法
     @classmethod
     async def find(cls, pk):
         ' find object by primary key. '
+        # 通过主键找对象
         rs = await select('%s where `%s`=?' % (cls.__select__, cls.__primary_key__), [pk], 1)
         if len(rs) == 0:
             return None
         return cls(**rs[0])
 
+    # 往Model 类添加实例方法，可以让所有子类调用实例方法
     async def save(self):
         args = list(map(self.getValueOrDefault, self.__fields__))
         args.append(self.getValueOrDefault(self.__primary_key__))
         rows = await execute(self.__insert__, args)
         if rows != 1:
             logging.warning('failed to insert record: affected rows: %s' % rows)
+
+    async def update(self):
+        args = list(map(self.getValue, self.__fields__))
+        args.append(self.getValueOrDefault(self.__primary_key__))
+        rows = await execute(self.__update__, args)
+        if rows != 1:
+            logging.warning('failed to update by primary key: affected rows: %s' % rows)
+
+    async def remove(self):
+        args = [self.getValue(self.__primary_key__)]
+        rows = await execute(self.__delete__, args)
+        if rows != 1:
+            logging.warning('failed to remove by primary key: affected rows: %s' % rows)
 
 # 定义 Field
 class Field(object):
